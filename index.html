@@ -1,0 +1,1494 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Estudio Interactivo · Flashcards, Quiz &amp; Asociación</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<style>
+  html, body { background-color: #0f172a; }
+
+  ::selection { background: #2dd4bf33; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: #1e293b; }
+  ::-webkit-scrollbar-thumb { background: #334155; border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+  /* ---------- Flashcard flip ---------- */
+  .flashcard-scene {
+    perspective: 1600px;
+  }
+  .flashcard {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transition: transform 0.4s cubic-bezier(.4,.2,.2,1);
+    transform-style: preserve-3d;
+    cursor: pointer;
+  }
+  .flashcard.flipped {
+    transform: rotateY(180deg);
+  }
+  .flashcard-face {
+    position: absolute;
+    inset: 0;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    border-radius: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    text-align: center;
+    overflow: hidden;
+  }
+  .flashcard-back {
+    transform: rotateY(180deg);
+  }
+  .card-thumb {
+    max-height: 40%;
+    max-width: 100%;
+    object-fit: contain;
+    border-radius: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  /* ---------- Tabs ---------- */
+  .tab-btn {
+    transition: color 0.25s ease, border-color 0.25s ease;
+    border-bottom: 2px solid transparent;
+  }
+  .tab-btn.active {
+    color: #2dd4bf;
+    border-color: #2dd4bf;
+  }
+  .tab-btn:not(.active):hover {
+    color: #cbd5e1;
+  }
+
+  /* ---------- Quiz option buttons ---------- */
+  .quiz-option {
+    transition: background-color 0.25s ease, border-color 0.25s ease, opacity 0.25s ease, transform 0.15s ease;
+  }
+  .quiz-option:not(:disabled):hover {
+    transform: translateY(-1px);
+    border-color: #2dd4bf;
+  }
+  .quiz-option:disabled {
+    cursor: default;
+  }
+  .quiz-option.correct-answer {
+    background-color: rgb(16 185 129 / 0.2);
+    border-color: rgb(16 185 129);
+    color: rgb(110 231 183);
+  }
+  .quiz-option.wrong-answer {
+    background-color: rgb(244 63 94 / 0.2);
+    border-color: rgb(244 63 94);
+    color: rgb(253 164 175);
+    text-decoration: line-through;
+  }
+
+  /* ---------- Streak badge ---------- */
+  .streak-badge {
+    transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, transform 0.2s ease;
+  }
+  .streak-pulse {
+    animation: streakPulse 0.4s ease;
+  }
+  @keyframes streakPulse {
+    0% { transform: scale(1); }
+    40% { transform: scale(1.12); }
+    100% { transform: scale(1); }
+  }
+
+  /* ---------- Quiz submode selector ---------- */
+  .quiz-submode-btn {
+    transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+  }
+  .quiz-submode-btn.active {
+    background-color: rgb(45 212 191 / 0.15);
+    border-color: #2dd4bf;
+    color: #2dd4bf;
+  }
+  .quiz-submode-btn:not(.active):hover {
+    border-color: #475569;
+    color: #cbd5e1;
+  }
+
+  /* ---------- Ordenar proceso (drag & drop) ---------- */
+  .order-item {
+    transition: background-color 0.25s ease, border-color 0.25s ease, opacity 0.2s ease, transform 0.15s ease;
+    cursor: grab;
+  }
+  .order-item.dragging {
+    opacity: 0.4;
+  }
+  .order-item.order-correct {
+    background-color: rgb(16 185 129 / 0.15);
+    border-color: rgb(16 185 129);
+  }
+  .order-item.order-wrong {
+    background-color: rgb(244 63 94 / 0.15);
+    border-color: rgb(244 63 94);
+  }
+
+  /* ---------- Match game tiles ---------- */
+  .match-tile {
+    transition: background-color 0.25s ease, border-color 0.25s ease, opacity 0.5s ease, transform 0.2s ease;
+  }
+  .match-tile.selected {
+    border-color: rgb(59 130 246);
+    background-color: rgb(59 130 246 / 0.2);
+  }
+  .match-tile.wrong-flash {
+    border-color: rgb(244 63 94);
+    background-color: rgb(244 63 94 / 0.2);
+  }
+  .match-tile.solved {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .match-thumb {
+    width: 2.25rem;
+    height: 2.25rem;
+    object-fit: cover;
+    border-radius: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  .fade-in {
+    animation: fadeIn 0.3s ease;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+</style>
+</head>
+<body class="min-h-screen bg-slate-900 text-slate-100 antialiased">
+
+  <div class="max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+
+    <!-- ===================== HEADER ===================== -->
+    <header class="mb-8 text-center">
+      <h1 class="text-3xl sm:text-4xl font-bold tracking-tight bg-gradient-to-r from-teal-300 via-teal-400 to-emerald-400 bg-clip-text text-transparent">
+        Ecosistema de Estudio
+      </h1>
+      <p class="mt-2 text-slate-400 text-sm sm:text-base">Importa tu lista, memoriza con tarjetas y ponte a prueba con tres formas de Quiz.</p>
+    </header>
+
+    <!-- ===================== TABS NAV ===================== -->
+    <nav class="flex justify-center gap-2 sm:gap-6 border-b border-slate-800 mb-8 overflow-x-auto">
+      <button data-tab="import" class="tab-btn active whitespace-nowrap px-3 sm:px-4 py-3 text-sm sm:text-base font-medium text-slate-300" onclick="switchTab('import')">Cargar datos</button>
+      <button data-tab="flashcards" class="tab-btn whitespace-nowrap px-3 sm:px-4 py-3 text-sm sm:text-base font-medium text-slate-300" onclick="switchTab('flashcards')">Tarjetas</button>
+      <button data-tab="quiz" class="tab-btn whitespace-nowrap px-3 sm:px-4 py-3 text-sm sm:text-base font-medium text-slate-300" onclick="switchTab('quiz')">Quiz</button>
+      <button data-tab="session" class="tab-btn whitespace-nowrap px-3 sm:px-4 py-3 text-sm sm:text-base font-medium text-slate-300" onclick="switchTab('session')">🔴 Sesión</button>
+    </nav>
+
+    <!-- ===================== EMPTY-DECK NOTICE (global) ===================== -->
+    <div id="emptyDeckNotice" class="hidden mb-6 rounded-xl border border-amber-500/40 bg-amber-500/10 px-5 py-4 text-amber-200 text-sm sm:text-base flex items-center justify-between gap-4 flex-wrap">
+      <span>Tu mazo está vacío. Carga una lista de términos para desbloquear los juegos.</span>
+      <button onclick="switchTab('import')" class="shrink-0 rounded-lg bg-amber-500/20 border border-amber-500/50 px-3 py-1.5 text-amber-100 hover:bg-amber-500/30 transition-colors">Ir a Cargar datos</button>
+    </div>
+
+    <!-- ===================== PANEL: IMPORT ===================== -->
+    <section id="panel-import" class="fade-in">
+      <div class="bg-slate-800 rounded-2xl p-5 sm:p-6 border border-slate-700/60">
+        <h2 class="text-lg font-semibold text-slate-100 mb-1">Importador inteligente</h2>
+        <p class="text-slate-400 text-sm mb-1">Una línea por tarjeta. Usa <code class="text-teal-300">término - definición</code>, <code class="text-teal-300">término: definición</code>, una pregunta seguida de su respuesta, o texto libre.</p>
+        <p class="text-slate-400 text-sm mb-4">Para asociar una imagen, agrega <code class="text-teal-300"> | URL_DE_IMAGEN</code> al final de la línea (opcional). Ejemplo: <code class="text-teal-300">Volcán - Montaña con una abertura que expulsa magma | https://...</code></p>
+        <textarea id="importTextarea" rows="12" class="w-full resize-y rounded-xl bg-slate-900 border border-slate-700 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-400/30 px-4 py-3 text-sm text-slate-100 placeholder-slate-500"></textarea>
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          <button onclick="processImport()" class="rounded-xl bg-teal-500 hover:bg-teal-400 transition-colors text-slate-900 font-semibold px-5 py-2.5 text-sm">Procesar e importar lista</button>
+          <span id="importStatus" class="text-sm text-slate-400"></span>
+        </div>
+      </div>
+
+      <div class="bg-slate-800 rounded-2xl p-5 sm:p-6 border border-slate-700/60 mt-5">
+        <h2 class="text-lg font-semibold text-slate-100 mb-1">Agregar tarjeta rápida</h2>
+        <p class="text-slate-400 text-sm mb-4">Para sumar una sola tarjeta sin tocar la lista de arriba. No borra lo ya importado.</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <input id="quickTerm" type="text" placeholder="Término o pregunta" class="rounded-xl bg-slate-900 border border-slate-700 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-400/30 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500">
+          <input id="quickDefinition" type="text" placeholder="Definición o respuesta" class="rounded-xl bg-slate-900 border border-slate-700 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-400/30 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500">
+        </div>
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+          <label class="text-sm rounded-lg border border-slate-700 hover:border-teal-400 hover:text-teal-300 transition-colors px-3 py-1.5 text-slate-300 cursor-pointer">
+            🖼️ <span id="quickImageLabel">Adjuntar imagen (opcional)</span>
+            <input id="quickImageInput" type="file" accept="image/*" class="hidden" onchange="handleQuickImageSelected(event)">
+          </label>
+          <button onclick="addQuickCard()" class="rounded-xl bg-teal-500 hover:bg-teal-400 transition-colors text-slate-900 font-semibold px-5 py-2.5 text-sm">+ Añadir tarjeta</button>
+          <span id="quickAddStatus" class="text-sm text-slate-400"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== PANEL: FLASHCARDS ===================== -->
+    <section id="panel-flashcards" class="hidden">
+      <div id="flashcardsContent">
+        <div class="flex items-center justify-between mb-4">
+          <span id="flashcardCounter" class="text-sm text-slate-400">Tarjeta 0 de 0</span>
+          <div class="flex items-center gap-2">
+            <button onclick="triggerImageUpload()" class="text-sm rounded-lg border border-slate-700 hover:border-teal-400 hover:text-teal-300 transition-colors px-3 py-1.5 text-slate-300">🖼️ Imagen</button>
+            <button onclick="shuffleDeck()" class="text-sm rounded-lg border border-slate-700 hover:border-teal-400 hover:text-teal-300 transition-colors px-3 py-1.5 text-slate-300">Mezclar mazo</button>
+          </div>
+        </div>
+        <input type="file" id="imageFileInput" accept="image/*" class="hidden" onchange="handleImageFileSelected(event)">
+
+        <div class="flashcard-scene h-72 sm:h-80">
+          <div id="flashcard" class="flashcard" onclick="flipCard()">
+            <div class="flashcard-face flashcard-front bg-slate-800 border border-slate-700">
+              <img id="flashcardFrontImg" class="card-thumb hidden" src="" alt="">
+              <p id="flashcardFrontText" class="text-lg sm:text-xl font-medium text-slate-100"></p>
+            </div>
+            <div class="flashcard-face flashcard-back bg-slate-800 border border-teal-500/50">
+              <p id="flashcardBackText" class="text-base sm:text-lg text-teal-200"></p>
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center justify-center gap-3 mt-3">
+          <p class="text-center text-xs text-slate-500">Haz clic en la tarjeta para voltearla</p>
+          <button id="removeImageBtn" onclick="removeCardImage(event)" class="hidden text-xs text-rose-400 hover:text-rose-300 underline underline-offset-2">quitar imagen</button>
+        </div>
+
+        <div class="mt-6 flex items-center justify-center gap-3">
+          <button id="prevCardBtn" onclick="prevCard()" class="rounded-xl border border-slate-700 px-5 py-2.5 text-sm text-slate-200 hover:border-teal-400 hover:text-teal-300 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:border-slate-700 disabled:hover:text-slate-200">← Anterior</button>
+          <button id="nextCardBtn" onclick="nextCard()" class="rounded-xl bg-teal-500 hover:bg-teal-400 transition-colors text-slate-900 font-semibold px-5 py-2.5 text-sm disabled:opacity-30 disabled:cursor-not-allowed disabled:bg-teal-500">Siguiente →</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== PANEL: QUIZ (3 submodos) ===================== -->
+    <section id="panel-quiz" class="hidden">
+
+      <div class="flex justify-center gap-2 mb-5 flex-wrap">
+        <button data-submode="auto" class="quiz-submode-btn active text-sm rounded-full border border-slate-700 text-slate-300 px-4 py-1.5" onclick="setQuizSubMode('auto')">🎲 Automático (mezcla todo)</button>
+        <button data-submode="multiple" class="quiz-submode-btn text-sm rounded-full border border-slate-700 text-slate-300 px-4 py-1.5" onclick="setQuizSubMode('multiple')">🔀 Opción múltiple</button>
+        <button data-submode="order" class="quiz-submode-btn text-sm rounded-full border border-slate-700 text-slate-300 px-4 py-1.5" onclick="setQuizSubMode('order')">🔢 Ordenar proceso</button>
+        <button data-submode="match" class="quiz-submode-btn text-sm rounded-full border border-slate-700 text-slate-300 px-4 py-1.5" onclick="setQuizSubMode('match')">🔗 Relacionar</button>
+      </div>
+
+      <div id="quizScoreBar" class="flex flex-wrap items-center gap-3 mb-4">
+        <span class="text-sm text-emerald-400 font-medium">Bien: <span id="scoreCorrect">0</span></span>
+        <span class="text-sm text-rose-400 font-medium">Mal: <span id="scoreWrong">0</span></span>
+        <span id="streakBadge" class="streak-badge text-sm font-semibold rounded-full border border-slate-700 bg-slate-800 text-slate-400 px-3 py-1">🔥 Racha: <span id="streakCount">0</span></span>
+      </div>
+
+      <!-- ---- Submodo: Opción múltiple ---- -->
+      <div id="quizModeMultipleContainer">
+        <div id="quizDirectionToggle" class="flex justify-end items-center gap-2 mb-4">
+          <button onclick="toggleQuizMode()" class="text-sm rounded-lg border border-slate-700 hover:border-teal-400 hover:text-teal-300 transition-colors px-3 py-1.5 text-slate-300">
+            ⇄ <span id="quizModeLabel">Definición → Concepto</span>
+          </button>
+          <span id="quizLockBadge" class="hidden text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-full px-2.5 py-1" title="Esta tarjeta es una pregunta y siempre se muestra en su forma original">🔒 Fijo</span>
+        </div>
+
+        <div class="bg-slate-800 rounded-2xl p-6 border border-slate-700/60 min-h-[7rem] flex flex-col items-center justify-center gap-3">
+          <img id="quizPromptImg" class="hidden max-h-40 rounded-xl object-contain" src="" alt="">
+          <p id="quizPrompt" class="text-lg sm:text-xl text-center text-slate-100 font-medium"></p>
+        </div>
+
+        <div id="quizOptions" class="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+
+        <div class="mt-5 flex justify-center">
+          <button id="quizNextBtn" onclick="nextQuizQuestion()" class="hidden rounded-xl bg-teal-500 hover:bg-teal-400 transition-colors text-slate-900 font-semibold px-5 py-2.5 text-sm">Siguiente pregunta →</button>
+        </div>
+      </div>
+
+      <!-- ---- Submodo: Ordenar proceso ---- -->
+      <div id="quizModeOrderContainer" class="hidden">
+        <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+          <p class="text-sm text-slate-400">Arrastra los pasos (o usa las flechas) para ponerlos en el orden correcto.</p>
+          <button onclick="initOrderGame()" class="text-sm rounded-lg border border-slate-700 hover:border-teal-400 hover:text-teal-300 transition-colors px-3 py-1.5 text-slate-300 shrink-0">🔀 Nuevo orden</button>
+        </div>
+
+        <div id="orderList" class="space-y-2"></div>
+
+        <div class="mt-5 flex justify-center">
+          <button onclick="checkOrder()" class="rounded-xl bg-teal-500 hover:bg-teal-400 transition-colors text-slate-900 font-semibold px-5 py-2.5 text-sm">Comprobar orden</button>
+        </div>
+        <p id="orderResultBanner" class="hidden mt-4 text-center text-sm font-medium"></p>
+        <div class="mt-3 flex justify-center">
+          <button id="orderNextRoundBtn" onclick="startAutoRound()" class="hidden rounded-xl bg-teal-500 hover:bg-teal-400 transition-colors text-slate-900 font-semibold px-5 py-2.5 text-sm">Siguiente ronda 🎲</button>
+        </div>
+      </div>
+
+      <!-- ---- Submodo: Relacionar (antes "Asociación") ---- -->
+      <div id="quizModeMatchContainer" class="hidden">
+        <div class="flex items-center justify-between mb-4">
+          <span id="matchCounter" class="text-sm text-slate-400">Parejas: 0 de 0</span>
+          <button onclick="initMatchGame()" class="text-sm rounded-lg border border-slate-700 hover:border-teal-400 hover:text-teal-300 transition-colors px-3 py-1.5 text-slate-300">Nuevo tablero</button>
+        </div>
+
+        <div id="matchBoard" class="grid grid-cols-2 gap-4 sm:gap-6"></div>
+
+        <div id="matchVictory" class="hidden mt-6 text-center bg-emerald-500/10 border border-emerald-500/40 rounded-2xl p-8">
+          <p class="text-2xl mb-2">🎉</p>
+          <p class="text-lg font-semibold text-emerald-300 mb-4">¡Completaste el tablero!</p>
+          <button id="matchPlayAgainBtn" onclick="handleMatchPlayAgain()" class="rounded-xl bg-emerald-500 hover:bg-emerald-400 transition-colors text-slate-900 font-semibold px-5 py-2.5 text-sm">Jugar de nuevo</button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===================== PANEL: SESIÓN EN VIVO (Firebase) ===================== -->
+    <section id="panel-session" class="hidden">
+      <div class="space-y-5">
+
+        <div id="firebaseConfigBox" class="bg-slate-800 rounded-2xl p-5 sm:p-6 border border-slate-700/60">
+          <h2 class="text-lg font-semibold text-slate-100 mb-1">Configurar Firebase (una sola vez)</h2>
+          <p class="text-slate-400 text-sm mb-3">
+            Crea un proyecto gratis en <a href="https://console.firebase.google.com" target="_blank" rel="noopener" class="text-teal-300 underline underline-offset-2">console.firebase.google.com</a>,
+            activa <span class="text-slate-200">Realtime Database</span> en modo de prueba, y pega abajo el objeto <code class="text-teal-300">firebaseConfig</code> tal como lo copias de la consola (Configuración del proyecto → Tus apps).
+          </p>
+          <textarea id="firebaseConfigInput" rows="6" placeholder='{ apiKey: "...", authDomain: "...", databaseURL: "...", projectId: "..." }' class="w-full rounded-xl bg-slate-900 border border-slate-700 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-400/30 px-4 py-3 text-xs font-mono text-slate-100 placeholder-slate-500"></textarea>
+          <div class="mt-3 flex items-center gap-3 flex-wrap">
+            <button onclick="saveFirebaseConfig()" class="rounded-xl bg-teal-500 hover:bg-teal-400 transition-colors text-slate-900 font-semibold px-5 py-2.5 text-sm">Guardar configuración</button>
+            <span id="firebaseConfigStatus" class="text-sm text-slate-400"></span>
+          </div>
+        </div>
+
+        <div id="roomControlsBox" class="hidden bg-slate-800 rounded-2xl p-5 sm:p-6 border border-slate-700/60">
+          <h2 class="text-lg font-semibold text-slate-100 mb-3">Sesión en vivo</h2>
+          <input id="myNameInput" type="text" placeholder="Tu nombre" class="w-full sm:w-64 rounded-xl bg-slate-900 border border-slate-700 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-400/30 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 mb-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <button onclick="createRoom()" class="rounded-xl bg-teal-500 hover:bg-teal-400 transition-colors text-slate-900 font-semibold px-5 py-2.5 text-sm">Crear sala nueva</button>
+            <span class="text-slate-500 text-sm">o</span>
+            <input id="joinRoomCodeInput" type="text" maxlength="6" placeholder="Código de sala" class="rounded-xl bg-slate-900 border border-slate-700 focus:border-teal-400 focus:outline-none focus:ring-2 focus:ring-teal-400/30 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 uppercase w-36">
+            <button onclick="joinRoom()" class="rounded-xl border border-slate-700 hover:border-teal-400 hover:text-teal-300 transition-colors px-5 py-2.5 text-sm text-slate-200">Unirse</button>
+          </div>
+          <span id="roomStatus" class="block mt-3 text-sm text-slate-400"></span>
+        </div>
+
+        <div id="activeRoomBox" class="hidden bg-slate-800 rounded-2xl p-5 sm:p-6 border border-teal-500/40">
+          <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+            <div>
+              <p class="text-xs text-slate-400">Código de sala</p>
+              <p id="activeRoomCode" class="text-2xl font-bold tracking-widest text-teal-300"></p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="copyRoomLink()" class="text-sm rounded-lg border border-slate-700 hover:border-teal-400 hover:text-teal-300 transition-colors px-3 py-1.5 text-slate-300">Copiar enlace</button>
+              <button onclick="leaveRoom()" class="text-sm rounded-lg border border-rose-500/50 text-rose-300 hover:bg-rose-500/10 transition-colors px-3 py-1.5">Salir de la sala</button>
+            </div>
+          </div>
+          <span id="copyStatus" class="text-xs text-slate-500"></span>
+          <p class="text-xs text-slate-500 mt-2 mb-4">Comparte este código con quien tenga el mismo archivo <code class="text-teal-300">index.html</code>. Mientras estén en la sala, Tarjetas y Quiz avanzan sincronizados para ambos.</p>
+
+          <p class="text-sm font-medium text-slate-300 mb-2">En la sala ahora</p>
+          <ul id="participantsList" class="flex flex-wrap gap-2 mb-5"></ul>
+
+          <p class="text-sm font-medium text-slate-300 mb-2">Marcador del Quiz</p>
+          <ul id="scoreboardList" class="space-y-1.5"></ul>
+        </div>
+
+      </div>
+    </section>
+
+  </div>
+
+<script>
+/* =========================================================================
+   ESTADO GLOBAL
+   ========================================================================= */
+let deck = [];               // { id, term, definition, image, isQuestion }
+let nextCardId = 0;          // contador incremental para tarjetas agregadas manualmente
+let originalDeckOrder = [];  // ids en el orden original de importación (referencia para "Ordenar proceso")
+let currentIndex = 0;        // índice actual de flashcards
+let isFlipped = false;
+
+let quizSubMode = 'auto';    // 'auto' | 'multiple' | 'order' | 'match'
+let autoModeActive = true;   // true mientras el modo mezclado está activo
+let quizIndex = 0;           // índice secuencial del quiz
+let quizMode = 'defToTerm';  // 'defToTerm' | 'termToDef'
+let quizAnswered = false;
+let quizCorrectAnswerText = '';
+let score = { correct: 0, wrong: 0 };
+let streak = 0;
+
+let matchLeft = [];          // [{id, text, image}]
+let matchRight = [];         // [{id, text}]
+let matchSelectedLeft = null;
+let matchSelectedRight = null;
+let matchResolvedCount = 0;
+let matchTotalCount = 0;
+let matchLocked = false;
+
+// ---- Ordenar proceso ----
+let orderItems = [];           // [{id, term, definition, ...}] en el orden visual actual (mezclado)
+let orderCorrectSequence = []; // ids en el orden correcto (según originalDeckOrder)
+let orderDragSrcIndex = null;
+
+// ---- Sesión en vivo (Firebase) ----
+let firebaseApp = null;
+let dbRoot = null;            // referencia raíz de la base de datos
+let currentRoomCode = null;
+let myId = null;
+let myName = 'Invitado';
+let roomListeners = [];       // [{ ref, fn }] para poder desuscribirse al salir
+
+/* =========================================================================
+   DATOS DE EJEMPLO (precarga)
+   ========================================================================= */
+const SAMPLE_DATA =
+`HTML - Lenguaje de marcado estándar para estructurar el contenido en la web
+CSS: Lenguaje de hojas de estilo usado para dar formato visual a documentos HTML
+¿Qué es una API? Un conjunto de reglas que permite que dos aplicaciones se comuniquen entre sí
+JavaScript - Lenguaje de programación interpretado que permite crear interactividad en páginas web | https://picsum.photos/seed/javascript/300/200
+Closure: Función que recuerda el entorno léxico en el que fue creada, incluso fuera de su ámbito original
+¿Qué es un array? Una estructura de datos que almacena una colección ordenada de elementos
+DOM - Representación en forma de árbol de los elementos de un documento HTML | https://picsum.photos/seed/dom/300/200
+Recursividad: Técnica en la que una función se llama a sí misma para resolver un problema
+¿Qué es la asincronía? La capacidad de un programa de ejecutar tareas sin bloquear el hilo principal
+Framework - Conjunto de herramientas y convenciones que facilitan el desarrollo de software
+Promesa: Objeto que representa la eventual finalización o falla de una operación asíncrona
+¿Qué es Git? Un sistema de control de versiones distribuido para rastrear cambios en el código | https://picsum.photos/seed/git/300/200
+Backend - Parte de una aplicación que se ejecuta en el servidor y gestiona la lógica de negocio
+Frontend: Parte de una aplicación con la que interactúa directamente el usuario
+¿Qué es una base de datos relacional? Un sistema que organiza datos en tablas vinculadas entre sí
+LocalStorage - Mecanismo del navegador para almacenar datos de forma persistente en el cliente`;
+
+/* =========================================================================
+   UTILIDADES
+   ========================================================================= */
+function shuffleArray(arr) {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+// Una tarjeta se considera "pregunta" si su término termina en "?".
+// Estas tarjetas nunca se invierten en el Quiz: siempre Pregunta → Respuesta.
+function computeIsQuestion(term) {
+  return /\?\s*$/.test((term || '').trim());
+}
+
+function checkEmptyDeck() {
+  const notice = document.getElementById('emptyDeckNotice');
+  const isEmpty = deck.length === 0;
+  notice.classList.toggle('hidden', !isEmpty);
+  return isEmpty;
+}
+
+/* =========================================================================
+   NAVEGACIÓN POR PESTAÑAS
+   ========================================================================= */
+function switchTab(tabName) {
+  const gameTabs = ['flashcards', 'quiz'];
+  if (gameTabs.includes(tabName) && deck.length === 0) {
+    tabName = 'import';
+  }
+
+  document.querySelectorAll('[id^="panel-"]').forEach(panel => panel.classList.add('hidden'));
+  document.getElementById('panel-' + tabName).classList.remove('hidden');
+  document.getElementById('panel-' + tabName).classList.add('fade-in');
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tabName);
+  });
+
+  if (tabName === 'flashcards') renderFlashcard();
+  if (tabName === 'quiz') setQuizSubMode(quizSubMode);
+}
+
+/* =========================================================================
+   IMPORTADOR INTELIGENTE (UNIVERSAL PARSER)
+   ========================================================================= */
+function parseLine(line, fallbackIndex) {
+  let trimmed = line.trim();
+
+  // Prioridad 0: pegado tipo hoja de cálculo (Excel / Google Sheets separa columnas con TAB)
+  if (trimmed.includes('\t')) {
+    const cols = trimmed.split('\t').map(c => c.trim());
+    const term = cols[0] || `Ítem ${fallbackIndex}`;
+    const definition = cols[1] || '';
+    const image = cols[2] && cols[2].length > 0 ? cols[2] : null;
+    if (term && definition) {
+      return { term, definition, image };
+    }
+  }
+
+  // Extracción opcional de imagen: " | URL_O_DATAURL" al final de la línea
+  let image = null;
+  const pipeIdx = trimmed.lastIndexOf(' | ');
+  if (pipeIdx !== -1) {
+    const possibleImage = trimmed.slice(pipeIdx + 3).trim();
+    if (possibleImage.length > 0) {
+      image = possibleImage;
+      trimmed = trimmed.slice(0, pipeIdx).trim();
+    }
+  }
+
+  // Regla 1: separador " - "
+  if (trimmed.includes(' - ')) {
+    const idx = trimmed.indexOf(' - ');
+    return {
+      term: trimmed.slice(0, idx).trim(),
+      definition: trimmed.slice(idx + 3).trim(),
+      image
+    };
+  }
+
+  // Regla 2: separador ": " (evita cortar dentro de una URL de imagen ya extraída)
+  if (trimmed.includes(': ')) {
+    const idx = trimmed.indexOf(': ');
+    return {
+      term: trimmed.slice(0, idx).trim(),
+      definition: trimmed.slice(idx + 2).trim(),
+      image
+    };
+  }
+
+  // Regla 3: patrón pregunta "...?" o primera palabra
+  const qMarkIdx = trimmed.indexOf('?');
+  if (qMarkIdx !== -1) {
+    return {
+      term: trimmed.slice(0, qMarkIdx + 1).trim(),
+      definition: trimmed.slice(qMarkIdx + 1).trim(),
+      image
+    };
+  }
+  const firstSpaceIdx = trimmed.indexOf(' ');
+  if (firstSpaceIdx !== -1) {
+    return {
+      term: trimmed.slice(0, firstSpaceIdx).trim(),
+      definition: trimmed.slice(firstSpaceIdx + 1).trim(),
+      image
+    };
+  }
+
+  // Regla 4: fallback numérico
+  return {
+    term: `Ítem ${fallbackIndex}`,
+    definition: trimmed,
+    image
+  };
+}
+
+function processImport() {
+  const raw = document.getElementById('importTextarea').value;
+  const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+  const newDeck = lines.map((line, i) => {
+    const parsed = parseLine(line, i + 1);
+    if (!parsed.term || !parsed.definition) {
+      const term = `Ítem ${i + 1}`;
+      return { id: i, term, definition: line, image: parsed.image, isQuestion: computeIsQuestion(term) };
+    }
+    return { id: i, term: parsed.term, definition: parsed.definition, image: parsed.image, isQuestion: computeIsQuestion(parsed.term) };
+  });
+
+  deck = newDeck;
+  nextCardId = newDeck.length;
+  originalDeckOrder = newDeck.map(c => c.id);
+  currentIndex = 0;
+  isFlipped = false;
+  quizIndex = 0;
+  score = { correct: 0, wrong: 0 };
+  streak = 0;
+  matchTotalCount = 0;
+  matchResolvedCount = 0;
+  orderItems = [];
+  orderCorrectSequence = [];
+
+  const status = document.getElementById('importStatus');
+  status.textContent = deck.length > 0
+    ? `${deck.length} tarjeta(s) importada(s) correctamente.`
+    : 'El mazo quedó vacío.';
+
+  checkEmptyDeck();
+  switchTab('flashcards');
+}
+
+let pendingQuickImage = null; // dataURL de la imagen seleccionada en el formulario rápido
+
+function handleQuickImageSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    pendingQuickImage = reader.result;
+    document.getElementById('quickImageLabel').textContent = file.name;
+  };
+  reader.readAsDataURL(file);
+}
+
+function addQuickCard() {
+  const term = document.getElementById('quickTerm').value.trim();
+  const definition = document.getElementById('quickDefinition').value.trim();
+  const status = document.getElementById('quickAddStatus');
+
+  if (!term || !definition) {
+    status.textContent = 'Escribe término y definición antes de añadir.';
+    status.classList.add('text-rose-400');
+    return;
+  }
+
+  deck.push({
+    id: nextCardId++,
+    term,
+    definition,
+    image: pendingQuickImage,
+    isQuestion: computeIsQuestion(term)
+  });
+  originalDeckOrder.push(deck[deck.length - 1].id);
+
+  status.classList.remove('text-rose-400');
+  status.textContent = `Tarjeta añadida. El mazo ahora tiene ${deck.length} tarjeta(s).`;
+
+  document.getElementById('quickTerm').value = '';
+  document.getElementById('quickDefinition').value = '';
+  document.getElementById('quickImageInput').value = '';
+  document.getElementById('quickImageLabel').textContent = 'Adjuntar imagen (opcional)';
+  pendingQuickImage = null;
+
+  checkEmptyDeck();
+}
+
+/* =========================================================================
+   MÓDULO A: FLASHCARDS (+ imágenes)
+   ========================================================================= */
+function renderFlashcard() {
+  if (checkEmptyDeck()) return;
+
+  const card = deck[currentIndex];
+  isFlipped = false;
+  document.getElementById('flashcard').classList.remove('flipped');
+  document.getElementById('flashcardFrontText').textContent = card.term;
+  document.getElementById('flashcardBackText').textContent = card.definition;
+  document.getElementById('flashcardCounter').textContent = `Tarjeta ${currentIndex + 1} de ${deck.length}`;
+
+  const img = document.getElementById('flashcardFrontImg');
+  const removeBtn = document.getElementById('removeImageBtn');
+  if (card.image) {
+    img.src = card.image;
+    img.classList.remove('hidden');
+    img.onerror = () => { img.classList.add('hidden'); };
+    removeBtn.classList.remove('hidden');
+  } else {
+    img.classList.add('hidden');
+    img.src = '';
+    removeBtn.classList.add('hidden');
+  }
+
+  document.getElementById('prevCardBtn').disabled = currentIndex === 0;
+  document.getElementById('nextCardBtn').disabled = currentIndex === deck.length - 1;
+}
+
+function flipCard() {
+  isFlipped = !isFlipped;
+  document.getElementById('flashcard').classList.toggle('flipped', isFlipped);
+  broadcastFlashcardState();
+}
+
+function nextCard() {
+  if (currentIndex < deck.length - 1) {
+    currentIndex++;
+    renderFlashcard();
+    broadcastFlashcardState();
+  }
+}
+
+function prevCard() {
+  if (currentIndex > 0) {
+    currentIndex--;
+    renderFlashcard();
+    broadcastFlashcardState();
+  }
+}
+
+function shuffleDeck() {
+  deck = shuffleArray(deck);
+  currentIndex = 0;
+  renderFlashcard();
+  broadcastDeck();
+  broadcastFlashcardState();
+}
+
+function triggerImageUpload() {
+  if (checkEmptyDeck()) return;
+  document.getElementById('imageFileInput').click();
+}
+
+function handleImageFileSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    deck[currentIndex].image = reader.result; // dataURL Base64
+    renderFlashcard();
+  };
+  reader.readAsDataURL(file);
+  event.target.value = ''; // permite volver a seleccionar el mismo archivo después
+}
+
+function removeCardImage(event) {
+  event.stopPropagation();
+  deck[currentIndex].image = null;
+  renderFlashcard();
+}
+
+/* =========================================================================
+   MÓDULO B: QUIZ (OPCIÓN MÚLTIPLE BIDIRECCIONAL) + RACHA + imagen
+   ========================================================================= */
+function toggleQuizMode() {
+  quizMode = quizMode === 'defToTerm' ? 'termToDef' : 'defToTerm';
+  renderQuiz();
+  broadcastQuizState();
+}
+
+function renderQuiz() {
+  if (checkEmptyDeck()) return;
+
+  quizAnswered = false;
+  document.getElementById('quizNextBtn').classList.add('hidden');
+  document.getElementById('quizNextBtn').textContent = autoModeActive ? 'Siguiente ronda 🎲' : 'Siguiente pregunta →';
+
+  document.getElementById('quizModeLabel').textContent =
+    quizMode === 'defToTerm' ? 'Definición → Concepto' : 'Concepto → Definición';
+
+  const current = deck[quizIndex % deck.length];
+
+  // Las tarjetas de tipo "pregunta" nunca se invierten: siempre Pregunta → Respuesta.
+  const effectiveMode = current.isQuestion ? 'termToDef' : quizMode;
+  document.getElementById('quizLockBadge').classList.toggle('hidden', !current.isQuestion);
+
+  const promptText = effectiveMode === 'defToTerm' ? current.definition : current.term;
+  const correctText = effectiveMode === 'defToTerm' ? current.term : current.definition;
+  quizCorrectAnswerText = correctText;
+
+  document.getElementById('quizPrompt').textContent = promptText;
+
+  const promptImg = document.getElementById('quizPromptImg');
+  if (current.image) {
+    promptImg.src = current.image;
+    promptImg.classList.remove('hidden');
+    promptImg.onerror = () => { promptImg.classList.add('hidden'); };
+  } else {
+    promptImg.classList.add('hidden');
+    promptImg.src = '';
+  }
+
+  // Generar 3 distractores distintos del ítem actual
+  const others = deck.filter(item => item.id !== current.id);
+  const shuffledOthers = shuffleArray(others).slice(0, Math.min(3, others.length));
+  const distractorTexts = shuffledOthers.map(item => effectiveMode === 'defToTerm' ? item.term : item.definition);
+
+  const options = shuffleArray([correctText, ...distractorTexts]);
+
+  const optionsContainer = document.getElementById('quizOptions');
+  optionsContainer.innerHTML = '';
+  options.forEach(optionText => {
+    const btn = document.createElement('button');
+    btn.className = 'quiz-option text-left rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm sm:text-base text-slate-200';
+    btn.textContent = optionText;
+    btn.onclick = () => selectQuizOption(optionText, btn);
+    optionsContainer.appendChild(btn);
+  });
+
+  updateScoreDisplay();
+  updateStreakDisplay(false);
+}
+
+function selectQuizOption(selectedText, btnEl) {
+  if (quizAnswered) return;
+  quizAnswered = true;
+
+  const allButtons = document.querySelectorAll('#quizOptions .quiz-option');
+  allButtons.forEach(btn => { btn.disabled = true; });
+
+  const isCorrect = selectedText === quizCorrectAnswerText;
+
+  if (isCorrect) {
+    btnEl.classList.add('correct-answer');
+    score.correct++;
+    streak++;
+  } else {
+    btnEl.classList.add('wrong-answer');
+    allButtons.forEach(btn => {
+      if (btn.textContent === quizCorrectAnswerText) btn.classList.add('correct-answer');
+    });
+    score.wrong++;
+    streak = 0;
+  }
+
+  updateScoreDisplay();
+  updateStreakDisplay(true);
+  broadcastScore();
+  document.getElementById('quizNextBtn').classList.remove('hidden');
+}
+
+function nextQuizQuestion() {
+  if (autoModeActive) {
+    startAutoRound();
+    return;
+  }
+  quizIndex = (quizIndex + 1) % deck.length;
+  renderQuiz();
+  broadcastQuizState();
+}
+
+function updateScoreDisplay() {
+  document.getElementById('scoreCorrect').textContent = score.correct;
+  document.getElementById('scoreWrong').textContent = score.wrong;
+}
+
+// Racha visual: 0-3 neutro · 4-12 rojo · 13+ azul
+function updateStreakDisplay(pulse) {
+  const badge = document.getElementById('streakBadge');
+  document.getElementById('streakCount').textContent = streak;
+
+  badge.classList.remove(
+    'border-slate-700', 'bg-slate-800', 'text-slate-400',
+    'border-rose-500', 'bg-rose-500/20', 'text-rose-300',
+    'border-blue-500', 'bg-blue-500/20', 'text-blue-300'
+  );
+
+  if (streak > 12) {
+    badge.classList.add('border-blue-500', 'bg-blue-500/20', 'text-blue-300');
+  } else if (streak >= 4) {
+    badge.classList.add('border-rose-500', 'bg-rose-500/20', 'text-rose-300');
+  } else {
+    badge.classList.add('border-slate-700', 'bg-slate-800', 'text-slate-400');
+  }
+
+  if (pulse) {
+    badge.classList.remove('streak-pulse');
+    void badge.offsetWidth; // reinicia la animación
+    badge.classList.add('streak-pulse');
+  }
+}
+
+/* =========================================================================
+   SELECTOR DE SUBMODO DENTRO DEL QUIZ
+   ========================================================================= */
+function setQuizSubMode(mode) {
+  if (checkEmptyDeck()) return;
+  quizSubMode = mode;
+  autoModeActive = (mode === 'auto');
+
+  document.querySelectorAll('.quiz-submode-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.submode === mode);
+  });
+
+  // El marcador Bien/Mal/Racha aplica a Automático, Opción múltiple y Ordenar proceso;
+  // solo se oculta cuando estás practicando "Relacionar" de forma manual y aislada.
+  document.getElementById('quizScoreBar').classList.toggle('hidden', mode === 'match');
+  // El botón de inversión manual (⇄) solo aplica al submodo fijo de Opción múltiple;
+  // en Automático la dirección se elige sola en cada ronda.
+  document.getElementById('quizDirectionToggle').classList.toggle('hidden', mode !== 'multiple');
+
+  if (mode === 'multiple') { showOnlyContainer('multiple'); renderQuiz(); }
+  else if (mode === 'order') { showOnlyContainer('order'); if (orderItems.length === 0) initOrderGame(); }
+  else if (mode === 'match') { showOnlyContainer('match'); if (matchTotalCount === 0) initMatchGame(); }
+  else if (mode === 'auto') { startAutoRound(); }
+}
+
+function showOnlyContainer(type) {
+  document.getElementById('quizModeMultipleContainer').classList.toggle('hidden', type !== 'multiple');
+  document.getElementById('quizModeOrderContainer').classList.toggle('hidden', type !== 'order');
+  document.getElementById('quizModeMatchContainer').classList.toggle('hidden', type !== 'match');
+}
+
+// Qué tipos de ronda son viables según el tamaño actual del mazo.
+function getAvailableAutoTypes() {
+  if (deck.length < 2) return ['multiple'];
+  return ['multiple', 'order', 'match'];
+}
+
+// Motor del modo Automático: elige al azar qué mini-juego mostrar en la
+// siguiente ronda y, si toca Opción múltiple, también mezcla la pregunta
+// y la dirección (Definición→Concepto o al revés), respetando que las
+// tarjetas tipo pregunta ("¿...?") siempre queden fijas.
+function startAutoRound() {
+  if (checkEmptyDeck()) return;
+
+  const types = getAvailableAutoTypes();
+  const type = types[Math.floor(Math.random() * types.length)];
+  showOnlyContainer(type);
+
+  if (type === 'multiple') {
+    quizIndex = Math.floor(Math.random() * deck.length);
+    const card = deck[quizIndex];
+    quizMode = card.isQuestion ? 'termToDef' : (Math.random() < 0.5 ? 'defToTerm' : 'termToDef');
+    renderQuiz();
+  } else if (type === 'order') {
+    initOrderGame();
+  } else if (type === 'match') {
+    initMatchGame();
+  }
+}
+
+/* =========================================================================
+   MÓDULO B.2: ORDENAR PROCESO
+   El orden correcto se toma del orden en que las tarjetas fueron importadas
+   (originalDeckOrder), no del orden visual actual de Tarjetas (que puede
+   haberse mezclado con "Mezclar mazo").
+   ========================================================================= */
+function initOrderGame() {
+  if (checkEmptyDeck()) return;
+
+  const banner = document.getElementById('orderResultBanner');
+  banner.classList.add('hidden');
+  document.getElementById('orderNextRoundBtn').classList.add('hidden');
+
+  if (deck.length < 2) {
+    document.getElementById('orderList').innerHTML =
+      '<p class="text-sm text-slate-500 text-center py-6">Necesitas al menos 2 tarjetas en el mazo para jugar a ordenar un proceso.</p>';
+    orderItems = [];
+    orderCorrectSequence = [];
+    return;
+  }
+
+  const subsetSize = Math.min(8, deck.length);
+  const subsetIds = originalDeckOrder.slice(0, subsetSize);
+  orderCorrectSequence = subsetIds;
+
+  const subsetCards = subsetIds.map(id => deck.find(c => c.id === id)).filter(Boolean);
+  orderItems = shuffleArray(subsetCards);
+
+  renderOrderList();
+}
+
+function renderOrderList() {
+  const container = document.getElementById('orderList');
+  container.innerHTML = '';
+
+  orderItems.forEach((card, idx) => {
+    const item = document.createElement('div');
+    item.className = 'order-item flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-800 px-4 py-3';
+    item.draggable = true;
+
+    item.addEventListener('dragstart', () => {
+      orderDragSrcIndex = idx;
+      item.classList.add('dragging');
+    });
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging');
+    });
+    item.addEventListener('dragover', (e) => {
+      e.preventDefault();
+    });
+    item.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (orderDragSrcIndex === null || orderDragSrcIndex === idx) return;
+      const moved = orderItems.splice(orderDragSrcIndex, 1)[0];
+      orderItems.splice(idx, 0, moved);
+      orderDragSrcIndex = null;
+      renderOrderList();
+    });
+
+    const handle = document.createElement('span');
+    handle.className = 'text-slate-500 select-none';
+    handle.textContent = '⠿';
+
+    const numberBadge = document.createElement('span');
+    numberBadge.className = 'text-xs font-semibold text-slate-500 w-5 text-center shrink-0';
+    numberBadge.textContent = idx + 1;
+
+    const label = document.createElement('span');
+    label.className = 'flex-1 text-sm text-slate-200';
+    label.textContent = card.term;
+
+    const arrows = document.createElement('div');
+    arrows.className = 'flex flex-col gap-0.5 shrink-0';
+
+    const upBtn = document.createElement('button');
+    upBtn.textContent = '↑';
+    upBtn.className = 'text-xs leading-none text-slate-400 hover:text-teal-300 transition-colors px-1.5 py-1 disabled:opacity-20 disabled:hover:text-slate-400';
+    upBtn.disabled = idx === 0;
+    upBtn.onclick = () => moveOrderItem(idx, -1);
+
+    const downBtn = document.createElement('button');
+    downBtn.textContent = '↓';
+    downBtn.className = 'text-xs leading-none text-slate-400 hover:text-teal-300 transition-colors px-1.5 py-1 disabled:opacity-20 disabled:hover:text-slate-400';
+    downBtn.disabled = idx === orderItems.length - 1;
+    downBtn.onclick = () => moveOrderItem(idx, 1);
+
+    arrows.appendChild(upBtn);
+    arrows.appendChild(downBtn);
+
+    item.appendChild(handle);
+    item.appendChild(numberBadge);
+    item.appendChild(label);
+    item.appendChild(arrows);
+    container.appendChild(item);
+  });
+}
+
+function moveOrderItem(index, direction) {
+  const newIndex = index + direction;
+  if (newIndex < 0 || newIndex >= orderItems.length) return;
+  [orderItems[index], orderItems[newIndex]] = [orderItems[newIndex], orderItems[index]];
+  renderOrderList();
+}
+
+function checkOrder() {
+  if (orderItems.length === 0) return;
+
+  const currentIds = orderItems.map(c => c.id);
+  const isCorrect = JSON.stringify(currentIds) === JSON.stringify(orderCorrectSequence);
+
+  document.querySelectorAll('#orderList .order-item').forEach((el, idx) => {
+    el.classList.remove('order-correct', 'order-wrong');
+    el.classList.add(currentIds[idx] === orderCorrectSequence[idx] ? 'order-correct' : 'order-wrong');
+  });
+
+  if (isCorrect) {
+    score.correct++;
+    streak++;
+  } else {
+    score.wrong++;
+    streak = 0;
+  }
+  updateScoreDisplay();
+  updateStreakDisplay(true);
+  broadcastScore();
+
+  const banner = document.getElementById('orderResultBanner');
+  banner.textContent = isCorrect
+    ? '✅ ¡Orden correcto!'
+    : '❌ Todavía no. Revisa los pasos en rojo y vuelve a intentar.';
+  banner.className = isCorrect
+    ? 'mt-4 text-center text-sm font-medium text-emerald-300'
+    : 'mt-4 text-center text-sm font-medium text-rose-300';
+  banner.classList.remove('hidden');
+  document.getElementById('orderNextRoundBtn').classList.toggle('hidden', !autoModeActive);
+}
+
+/* =========================================================================
+   MÓDULO C: JUEGO DE ASOCIACIÓN (MATCHING GAME) + miniatura
+   ========================================================================= */
+function initMatchGame() {
+  if (checkEmptyDeck()) return;
+
+  document.getElementById('matchVictory').classList.add('hidden');
+  document.getElementById('matchBoard').classList.remove('hidden');
+
+  const subset = shuffleArray(deck).slice(0, Math.min(5, deck.length));
+  matchLeft = shuffleArray(subset.map(item => ({ id: item.id, text: item.term, image: item.image })));
+  matchRight = shuffleArray(subset.map(item => ({ id: item.id, text: item.definition })));
+
+  matchSelectedLeft = null;
+  matchSelectedRight = null;
+  matchResolvedCount = 0;
+  matchTotalCount = subset.length;
+  matchLocked = false;
+
+  renderMatchBoard();
+  updateMatchCounter();
+}
+
+function renderMatchBoard() {
+  const board = document.getElementById('matchBoard');
+  board.innerHTML = '';
+
+  const leftCol = document.createElement('div');
+  leftCol.className = 'flex flex-col gap-3';
+  matchLeft.forEach((item, i) => leftCol.appendChild(createMatchTile(item, 'left', i)));
+
+  const rightCol = document.createElement('div');
+  rightCol.className = 'flex flex-col gap-3';
+  matchRight.forEach((item, i) => rightCol.appendChild(createMatchTile(item, 'right', i)));
+
+  board.appendChild(leftCol);
+  board.appendChild(rightCol);
+}
+
+function createMatchTile(item, side, index) {
+  const tile = document.createElement('button');
+  tile.className = 'match-tile flex items-center gap-2 text-left rounded-xl border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-slate-200';
+  tile.dataset.side = side;
+  tile.dataset.index = index;
+  tile.onclick = () => handleMatchClick(side, index, tile);
+
+  if (side === 'left' && item.image) {
+    const thumb = document.createElement('img');
+    thumb.src = item.image;
+    thumb.className = 'match-thumb';
+    thumb.alt = '';
+    thumb.onerror = () => { thumb.remove(); };
+    tile.appendChild(thumb);
+  }
+
+  const label = document.createElement('span');
+  label.textContent = item.text;
+  tile.appendChild(label);
+
+  return tile;
+}
+
+function handleMatchClick(side, index, tileEl) {
+  if (matchLocked || tileEl.classList.contains('solved')) return;
+
+  const board = document.getElementById('matchBoard');
+
+  if (side === 'left') {
+    board.querySelectorAll('[data-side="left"]').forEach(t => t.classList.remove('selected'));
+    tileEl.classList.add('selected');
+    matchSelectedLeft = { index, el: tileEl };
+  } else {
+    board.querySelectorAll('[data-side="right"]').forEach(t => t.classList.remove('selected'));
+    tileEl.classList.add('selected');
+    matchSelectedRight = { index, el: tileEl };
+  }
+
+  if (matchSelectedLeft && matchSelectedRight) {
+    evaluateMatchPair();
+  }
+}
+
+function evaluateMatchPair() {
+  const leftItem = matchLeft[matchSelectedLeft.index];
+  const rightItem = matchRight[matchSelectedRight.index];
+  const leftEl = matchSelectedLeft.el;
+  const rightEl = matchSelectedRight.el;
+
+  if (leftItem.id === rightItem.id) {
+    leftEl.classList.remove('selected');
+    rightEl.classList.remove('selected');
+    leftEl.classList.add('solved');
+    rightEl.classList.add('solved');
+    matchResolvedCount++;
+    matchSelectedLeft = null;
+    matchSelectedRight = null;
+    updateMatchCounter();
+
+    if (matchResolvedCount === matchTotalCount) {
+      setTimeout(() => {
+        document.getElementById('matchBoard').classList.add('hidden');
+        document.getElementById('matchVictory').classList.remove('hidden');
+
+        const playAgainBtn = document.getElementById('matchPlayAgainBtn');
+        if (autoModeActive) {
+          playAgainBtn.textContent = 'Siguiente ronda 🎲';
+          score.correct++;
+          streak++;
+          updateScoreDisplay();
+          updateStreakDisplay(true);
+          broadcastScore();
+        } else {
+          playAgainBtn.textContent = 'Jugar de nuevo';
+        }
+      }, 300);
+    }
+  } else {
+    matchLocked = true;
+    leftEl.classList.remove('selected');
+    rightEl.classList.remove('selected');
+    leftEl.classList.add('wrong-flash');
+    rightEl.classList.add('wrong-flash');
+
+    setTimeout(() => {
+      leftEl.classList.remove('wrong-flash');
+      rightEl.classList.remove('wrong-flash');
+      matchSelectedLeft = null;
+      matchSelectedRight = null;
+      matchLocked = false;
+    }, 800);
+  }
+}
+
+function updateMatchCounter() {
+  document.getElementById('matchCounter').textContent = `Parejas: ${matchResolvedCount} de ${matchTotalCount}`;
+}
+
+// En modo Automático, "jugar de nuevo" en realidad avanza a una ronda nueva
+// (que puede tocar Opción múltiple u Ordenar proceso); en modo manual, solo reinicia el tablero.
+function handleMatchPlayAgain() {
+  if (autoModeActive) {
+    startAutoRound();
+  } else {
+    initMatchGame();
+  }
+}
+
+/* =========================================================================
+   SESIÓN EN VIVO (Firebase Realtime Database)
+   ========================================================================= */
+function saveFirebaseConfig() {
+  const raw = document.getElementById('firebaseConfigInput').value.trim();
+  const status = document.getElementById('firebaseConfigStatus');
+  status.classList.remove('text-rose-400');
+
+  if (!raw) {
+    status.textContent = 'Pega tu configuración de Firebase primero.';
+    return;
+  }
+  try {
+    // Acepta el objeto tal como lo copia la consola de Firebase (claves sin comillas incluidas)
+    const parsed = Function('"use strict"; return (' + raw + ')')();
+    if (!parsed || !parsed.apiKey || !parsed.databaseURL) {
+      throw new Error('Faltan campos (apiKey / databaseURL)');
+    }
+    localStorage.setItem('stc_firebaseConfig', JSON.stringify(parsed));
+    initFirebase(parsed);
+    status.textContent = '✓ Configuración guardada.';
+    document.getElementById('roomControlsBox').classList.remove('hidden');
+  } catch (err) {
+    status.textContent = 'No se pudo leer la configuración: ' + err.message;
+    status.classList.add('text-rose-400');
+  }
+}
+
+function initFirebase(config) {
+  if (firebaseApp) return;
+  firebaseApp = firebase.initializeApp(config);
+  dbRoot = firebase.database();
+}
+
+function generateRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin caracteres ambiguos
+  let code = '';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+function createRoom() {
+  const status = document.getElementById('roomStatus');
+  if (!dbRoot) { status.textContent = 'Primero guarda tu configuración de Firebase.'; return; }
+  if (checkEmptyDeck()) { status.textContent = 'Importa un mazo antes de crear la sala.'; return; }
+
+  myName = document.getElementById('myNameInput').value.trim() || 'Invitado';
+  localStorage.setItem('stc_myName', myName);
+
+  const code = generateRoomCode();
+  dbRoot.ref('rooms/' + code).set({
+    deck: deck,
+    quiz: { index: quizIndex, mode: quizMode },
+    flashcard: { index: currentIndex, flipped: false },
+    createdAt: Date.now()
+  }).then(() => {
+    enterRoom(code);
+  }).catch(err => {
+    status.textContent = 'Error al crear la sala: ' + err.message;
+  });
+}
+
+function joinRoom() {
+  const status = document.getElementById('roomStatus');
+  if (!dbRoot) { status.textContent = 'Primero guarda tu configuración de Firebase.'; return; }
+
+  const code = document.getElementById('joinRoomCodeInput').value.trim().toUpperCase();
+  if (!code) { status.textContent = 'Escribe un código de sala.'; return; }
+
+  myName = document.getElementById('myNameInput').value.trim() || 'Invitado';
+  localStorage.setItem('stc_myName', myName);
+
+  dbRoot.ref('rooms/' + code).once('value').then(snapshot => {
+    if (!snapshot.exists()) {
+      status.textContent = 'No existe una sala con ese código.';
+      return;
+    }
+    if (deck.length > 0 && !confirm('Unirte reemplazará tu mazo actual por el de la sala. ¿Continuar?')) {
+      return;
+    }
+    enterRoom(code);
+  }).catch(err => {
+    status.textContent = 'Error al unirse: ' + err.message;
+  });
+}
+
+function enterRoom(code) {
+  currentRoomCode = code;
+  const roomRef = dbRoot.ref('rooms/' + code);
+
+  const myPresenceRef = roomRef.child('participants/' + myId);
+  myPresenceRef.set({ name: myName, joinedAt: Date.now() });
+  myPresenceRef.onDisconnect().remove();
+  roomRef.child('scores/' + myId).set({ name: myName, correct: 0, wrong: 0, streak: 0 });
+
+  const deckFn = roomRef.child('deck').on('value', snap => {
+    const remoteDeck = snap.val();
+    if (!remoteDeck) return;
+    deck = remoteDeck;
+    nextCardId = deck.length;
+    originalDeckOrder = deck.map(c => c.id);
+    currentIndex = Math.min(currentIndex, Math.max(deck.length - 1, 0));
+    checkEmptyDeck();
+    if (!document.getElementById('panel-flashcards').classList.contains('hidden')) renderFlashcard();
+    if (!document.getElementById('panel-quiz').classList.contains('hidden') && quizSubMode === 'multiple') renderQuiz();
+  });
+
+  const quizFn = roomRef.child('quiz').on('value', snap => {
+    const q = snap.val();
+    if (!q) return;
+    quizIndex = q.index || 0;
+    quizMode = q.mode || 'defToTerm';
+    renderQuiz();
+  });
+
+  const flashcardFn = roomRef.child('flashcard').on('value', snap => {
+    const f = snap.val();
+    if (!f) return;
+    currentIndex = Math.min(f.index || 0, Math.max(deck.length - 1, 0));
+    isFlipped = !!f.flipped;
+    renderFlashcard();
+    document.getElementById('flashcard').classList.toggle('flipped', isFlipped);
+  });
+
+  const participantsFn = roomRef.child('participants').on('value', snap => {
+    renderParticipants(snap.val() || {});
+  });
+
+  const scoresFn = roomRef.child('scores').on('value', snap => {
+    renderScoreboard(snap.val() || {});
+  });
+
+  roomListeners = [
+    { ref: roomRef.child('deck'), fn: deckFn },
+    { ref: roomRef.child('quiz'), fn: quizFn },
+    { ref: roomRef.child('flashcard'), fn: flashcardFn },
+    { ref: roomRef.child('participants'), fn: participantsFn },
+    { ref: roomRef.child('scores'), fn: scoresFn }
+  ];
+
+  document.getElementById('activeRoomCode').textContent = code;
+  document.getElementById('activeRoomBox').classList.remove('hidden');
+  document.getElementById('roomControlsBox').classList.add('hidden');
+  document.getElementById('roomStatus').textContent = '';
+
+  switchTab('flashcards');
+}
+
+function leaveRoom() {
+  if (!currentRoomCode) return;
+  const roomRef = dbRoot.ref('rooms/' + currentRoomCode);
+  roomListeners.forEach(l => l.ref.off('value', l.fn));
+  roomListeners = [];
+  roomRef.child('participants/' + myId).remove();
+
+  currentRoomCode = null;
+  document.getElementById('activeRoomBox').classList.add('hidden');
+  document.getElementById('roomControlsBox').classList.remove('hidden');
+}
+
+function copyRoomLink() {
+  const link = location.origin + location.pathname + '#room=' + currentRoomCode;
+  const status = document.getElementById('copyStatus');
+  navigator.clipboard.writeText(link).then(() => {
+    status.textContent = 'Enlace copiado. Recuerda: solo abrirá directo si este archivo está alojado en una URL pública; si no, comparte el código.';
+  }).catch(() => {
+    status.textContent = link;
+  });
+}
+
+function renderParticipants(participants) {
+  const list = document.getElementById('participantsList');
+  list.innerHTML = '';
+  Object.values(participants).forEach(p => {
+    const li = document.createElement('li');
+    li.className = 'text-xs bg-slate-900 border border-slate-700 rounded-full px-3 py-1 text-slate-300';
+    li.textContent = p.name;
+    list.appendChild(li);
+  });
+}
+
+function renderScoreboard(scores) {
+  const list = document.getElementById('scoreboardList');
+  list.innerHTML = '';
+  const entries = Object.entries(scores).sort((a, b) => (b[1].correct - b[1].wrong) - (a[1].correct - a[1].wrong));
+
+  if (entries.length === 0) {
+    list.innerHTML = '<li class="text-xs text-slate-500">Aún no hay respuestas.</li>';
+    return;
+  }
+
+  entries.forEach(([id, s]) => {
+    const li = document.createElement('li');
+    li.className = 'flex items-center justify-between text-sm bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5';
+    const streakColorClass = s.streak > 12 ? 'text-blue-300' : (s.streak >= 4 ? 'text-rose-300' : 'text-slate-400');
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'text-slate-200';
+    nameSpan.textContent = s.name + (id === myId ? ' (tú)' : '');
+
+    const statsSpan = document.createElement('span');
+    statsSpan.className = 'text-xs space-x-2';
+    statsSpan.innerHTML =
+      `<span class="text-emerald-400">${s.correct} bien</span>` +
+      `<span class="text-rose-400">${s.wrong} mal</span>` +
+      `<span class="${streakColorClass}">racha ${s.streak}</span>`;
+
+    li.appendChild(nameSpan);
+    li.appendChild(statsSpan);
+    list.appendChild(li);
+  });
+}
+
+function broadcastFlashcardState() {
+  if (currentRoomCode) {
+    dbRoot.ref('rooms/' + currentRoomCode + '/flashcard').set({ index: currentIndex, flipped: isFlipped });
+  }
+}
+
+function broadcastDeck() {
+  if (currentRoomCode) {
+    dbRoot.ref('rooms/' + currentRoomCode + '/deck').set(deck);
+  }
+}
+
+function broadcastQuizState() {
+  if (currentRoomCode) {
+    dbRoot.ref('rooms/' + currentRoomCode + '/quiz').set({ index: quizIndex, mode: quizMode });
+  }
+}
+
+function broadcastScore() {
+  if (currentRoomCode) {
+    dbRoot.ref('rooms/' + currentRoomCode + '/scores/' + myId).set({ name: myName, correct: score.correct, wrong: score.wrong, streak });
+  }
+}
+
+/* =========================================================================
+   INICIALIZACIÓN
+   ========================================================================= */
+window.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('importTextarea').value = SAMPLE_DATA;
+  processImport();
+
+  // Identidad persistente del participante
+  myId = localStorage.getItem('stc_myId');
+  if (!myId) {
+    myId = 'p_' + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem('stc_myId', myId);
+  }
+  const savedName = localStorage.getItem('stc_myName');
+  if (savedName) {
+    myName = savedName;
+    document.getElementById('myNameInput').value = savedName;
+  }
+
+  // Restaurar configuración de Firebase guardada previamente
+  const savedConfig = localStorage.getItem('stc_firebaseConfig');
+  if (savedConfig) {
+    try {
+      const parsed = JSON.parse(savedConfig);
+      document.getElementById('firebaseConfigInput').value = JSON.stringify(parsed, null, 2);
+      initFirebase(parsed);
+      document.getElementById('roomControlsBox').classList.remove('hidden');
+      document.getElementById('firebaseConfigStatus').textContent = '✓ Configuración cargada.';
+    } catch (e) { /* configuración corrupta, se ignora */ }
+  }
+
+  // Si la URL trae un código de sala (#room=ABC123), lo precarga en el campo de unirse
+  const hashMatch = location.hash.match(/room=([A-Za-z0-9]+)/i);
+  if (hashMatch) {
+    document.getElementById('joinRoomCodeInput').value = hashMatch[1].toUpperCase();
+  }
+});
+</script>
+</body>
+</html>
